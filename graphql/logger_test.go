@@ -86,6 +86,37 @@ func TestOperationLoggingWithRedaction(t *testing.T) {
 	}
 }
 
+func TestNestedVariableRedaction(t *testing.T) {
+	var buf bytes.Buffer
+	gl := New(newTestLogger(&buf), WithRedactedVariables("password", "creditCard"))
+
+	_, finish := gl.OperationStart(context.Background(), Operation{
+		Name: "Signup",
+		Type: "mutation",
+		Variables: map[string]any{
+			"input": map[string]any{
+				"email":    "joey@example.com",
+				"password": "hunter2",
+				"billing":  map[string]any{"creditCard": "4111-1111-1111-1111"},
+				"contacts": []any{
+					map[string]any{"name": "alt", "password": "hunter3"},
+				},
+			},
+		},
+	})
+	finish()
+
+	out := buf.String()
+	for _, secret := range []string{"hunter2", "hunter3", "4111-1111-1111-1111"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("nested secret %q leaked into logs", secret)
+		}
+	}
+	if !strings.Contains(out, "joey@example.com") {
+		t.Error("non-sensitive nested value should still be logged")
+	}
+}
+
 func TestOperationErrors(t *testing.T) {
 	var buf bytes.Buffer
 	gl := New(newTestLogger(&buf))

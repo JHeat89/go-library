@@ -45,6 +45,24 @@ type Config struct {
 	// StaticFields are extra key/value pairs attached to every log line,
 	// e.g. {"costCenter": "1234"}. Optional.
 	StaticFields map[string]any
+	// RedactKeys lists field names whose values must never appear in logs,
+	// e.g. []string{"password", "token", "ssn"}. Matching is case-insensitive
+	// and recursive: it applies to top-level attributes, slog groups, and
+	// keys nested anywhere inside logged maps or slices, across every logger
+	// built on this base (rest, graphql, etl, events, raw slog). Optional.
+	RedactKeys []string
+	// RedactPII, when true, scrubs structured PII (emails, SSNs, credit card
+	// and phone numbers) out of every string value and log message, replacing
+	// only the matched text: "Starting run for joey@example.com" becomes
+	// "Starting run for [REDACTED]". See PIIPatterns for the detectors.
+	RedactPII bool
+	// RedactPatterns adds custom in-string scrubbing rules for shapes the
+	// built-ins can't know, e.g. customer names in known message formats:
+	//
+	//	{Regexp: regexp.MustCompile(`(?i)(customer )(\S+)`), Replacement: "${1}[REDACTED]"}
+	//
+	// Optional.
+	RedactPatterns []Pattern
 }
 
 func parseLevel(s string) slog.Level {

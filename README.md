@@ -159,6 +159,37 @@ timing, and a `performance` group:
 }
 ```
 
+## Redaction
+
+Configured once on the base logger, applied to **every** log line from every
+logger type (REST, GraphQL, ETL, events, raw slog):
+
+```go
+log := logger.Init(logger.Config{
+    Service: "orders-graph",
+    // Key-based: case-insensitive, recursive into nested maps/slices/groups.
+    RedactKeys: []string{"password", "token", "ssn"},
+    // Pattern-based: scrubs structured PII (emails, SSNs, credit cards,
+    // phone numbers) out of the middle of any string, message included.
+    RedactPII: true,
+    // Custom shapes the built-ins can't know:
+    RedactPatterns: []logger.Pattern{
+        {Regexp: regexp.MustCompile(`(?i)(customer )(\S+)`), Replacement: "${1}[REDACTED]"},
+    },
+})
+
+log.Info(ctx, "Starting Execution for Customer JoeyCox notify joey@example.com")
+// message: "Starting Execution for Customer [REDACTED] notify [REDACTED]"
+```
+
+Key-based redaction replaces the whole value; pattern-based replaces only the
+matched text so messages stay readable. Arbitrary personal names in free text
+are not rule-detectable — cover known message shapes with `RedactPatterns` or
+put names in dedicated fields and list those in `RedactKeys`.
+
+GraphQL variable redaction (`graphql.WithRedactedVariables`) uses the same
+recursive engine and now catches keys nested inside input objects.
+
 ## Runtime level changes
 
 ```go

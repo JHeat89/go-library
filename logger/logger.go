@@ -83,6 +83,13 @@ func New(cfg Config) *Logger {
 	} else {
 		inner = slog.NewJSONHandler(cfg.Output, opts)
 	}
+	patterns := cfg.RedactPatterns
+	if cfg.RedactPII {
+		patterns = append(PIIPatterns(), patterns...)
+	}
+	if r := newRedactor(cfg.RedactKeys, patterns); r != nil {
+		inner = redactHandler{inner: inner, r: r}
+	}
 
 	base := slog.New(contextHandler{inner: inner}).With(baseAttrs(cfg)...)
 	return &Logger{slog: base, level: level, cfg: cfg}

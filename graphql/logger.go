@@ -11,8 +11,6 @@ import (
 	"github.com/JHeat89/go-library/logger"
 )
 
-const redactedPlaceholder = "[REDACTED]"
-
 // Operation describes a GraphQL operation about to execute.
 type Operation struct {
 	// Name is the operation name, e.g. "GetOrders". May be empty for
@@ -31,7 +29,8 @@ type Operation struct {
 type Logger struct {
 	base         *logger.Logger
 	logVariables bool
-	redact       map[string]bool
+	redactNames  []string
+	redactor     *logger.Redactor
 	maxQueryLen  int
 }
 
@@ -44,13 +43,14 @@ func WithVariables(enabled bool) Option {
 	return func(l *Logger) { l.logVariables = enabled }
 }
 
-// WithRedactedVariables replaces the named top-level variables with
-// "[REDACTED]" in logs, e.g. WithRedactedVariables("password", "ssn", "token").
+// WithRedactedVariables replaces the named variables with "[REDACTED]" in
+// logs, e.g. WithRedactedVariables("password", "ssn", "token"). Matching is
+// case-insensitive and recursive, so keys nested inside input objects and
+// lists are caught too. Note: keys listed in the base logger's
+// Config.RedactKeys are already redacted everywhere, including here.
 func WithRedactedVariables(names ...string) Option {
 	return func(l *Logger) {
-		for _, n := range names {
-			l.redact[n] = true
-		}
+		l.redactNames = append(l.redactNames, names...)
 	}
 }
 
@@ -65,12 +65,12 @@ func New(base *logger.Logger, opts ...Option) *Logger {
 	l := &Logger{
 		base:         base,
 		logVariables: true,
-		redact:       map[string]bool{},
 		maxQueryLen:  2000,
 	}
 	for _, opt := range opts {
 		opt(l)
 	}
+	l.redactor = logger.NewRedactor(l.redactNames...)
 	return l
 }
 
@@ -97,7 +97,7 @@ func (l *Logger) OperationStart(ctx context.Context, op Operation) (context.Cont
 		attrs = append(attrs, "graphql.query", truncate(op.Query, l.maxQueryLen))
 	}
 	if l.logVariables && len(op.Variables) > 0 {
-		attrs = append(attrs, "graphql.variables", l.redactVariables(op.Variables))
+		attrs = append(attrs, "graphql.variables", l.redactor.Map(op.Variables))
 	}
 
 	ctx, lc := l.base.StartRequest(ctx, "graphql "+opType+" "+name, attrs...)
@@ -132,18 +132,6 @@ func (l *Logger) Stage(ctx context.Context, name string, attrs ...any) {
 
 // Base exposes the underlying base logger for ad-hoc logging in resolvers.
 func (l *Logger) Base() *logger.Logger { return l.base }
-
-func (l *Logger) redactVariables(vars map[string]any) map[string]any {
-	out := make(map[string]any, len(vars))
-	for k, v := range vars {
-		if l.redact[k] {
-			out[k] = redactedPlaceholder
-		} else {
-			out[k] = v
-		}
-	}
-	return out
-}
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

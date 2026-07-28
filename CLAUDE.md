@@ -61,5 +61,8 @@ depend on these names.
   (`OperationStart`, `ConsumeStart`) rather than requiring paired calls.
 - Tests assert on parsed JSON log output (see `logger/logger_test.go` for the
   `newTestLogger`/`lastLine` pattern) — reuse it rather than string-matching.
-- Sensitive data: GraphQL variable redaction lives in `graphql/logger.go`
-  (`WithRedactedVariables`); never log raw variables around it.
+- Sensitive data: redaction is centralized in `logger/redact.go` (`Redactor`,
+  applied handler-level via `Config.RedactKeys`/`RedactPII`/`RedactPatterns`).
+  Key matching is case-insensitive and recursive; patterns scrub matched
+  substrings only (partial redaction). `graphql.WithRedactedVariables`
+  delegates to the same engine — never add package-local redaction logic.
