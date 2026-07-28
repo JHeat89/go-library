@@ -1,0 +1,13 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Go build & test artifacts
+*.test
+*.out
+coverage.*
+
+# Env files
+.env
+.env.*
