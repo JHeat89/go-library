@@ -16,6 +16,7 @@ structured logger built on the standard library's `log/slog` with:
 - **Platform aware** — auto-detects Lambda, ECS, Kubernetes, container, or
   local and enriches logs accordingly (region, function name, pod, ...)
 - **Zero dependencies** for the core; only `graphql/gqlgen` pulls in gqlgen
+  and only `oauth/redis` pulls in go-redis
 
 ## Packages
 
@@ -28,6 +29,8 @@ structured logger built on the standard library's `log/slog` with:
 | `graphql/gqlgen` | Drop-in gqlgen handler extension |
 | `etl` | Batch/pipeline job logging with checkpoints and throughput |
 | `events` | Client-agnostic Kafka consume/produce logging with header-based request ID propagation |
+| `oauth` | OAuth 2.0 token acquisition (client_credentials, Salesforce password flow) with optional cache-aware fetching |
+| `oauth/redis` | go-redis v9 adapter for `oauth`'s token cache |
 
 ## Quickstart
 
@@ -124,6 +127,46 @@ for k, v := range events.OutgoingHeaders(ctx) {
 }
 ev.Produced(ctx, events.Message{Topic: msg.Topic, Key: string(msg.Key)}, writeErr)
 ```
+
+### OAuth token acquisition
+
+```go
+import (
+    "github.com/JHeat89/go-library/oauth"
+    oauthredis "github.com/JHeat89/go-library/oauth/redis"
+)
+
+client, err := oauth.New(log, oauth.Config{
+    GrantType:    oauth.GrantClientCredentials, // or oauth.GrantSalesforcePassword
+    TokenURL:     "https://login.salesforce.com/services/oauth2/token",
+    ClientID:     os.Getenv("OAUTH_CLIENT_ID"),
+    ClientSecret: os.Getenv("OAUTH_CLIENT_SECRET"),
+
+    // Cache-aware fetching — optional, independently switchable:
+    Cache:      oauthredis.New(redisClient), // any oauth.TokenCache works
+    CacheRead:  true,
+    CacheWrite: true,
+})
+
+tok, err := client.Token(ctx) // cache-aware: reads Cache first when CacheRead is set
+req.Header.Set("Authorization", tok.TokenType+" "+tok.AccessToken)
+
+// After a downstream 401, force a new grant rather than re-reading a cache
+// entry that may be the one that just failed:
+tok, err = client.Refresh(ctx)
+```
+
+Salesforce's username/password flow concatenates `Password` and
+`SecurityToken` in the form body and omits `expires_in` in its response, so
+`Config.DefaultTTL` (default 15m) governs the cached lifetime instead.
+
+There is **no in-memory token cache** — every `Token` call consults `Cache`
+(when `CacheRead` is set) or fetches fresh, since an external process may
+refresh the cached token out-of-band. `AccessToken`, `ClientSecret`,
+`Password`, `SecurityToken`, and raw response bodies are never logged,
+independent of the base logger's `RedactKeys` configuration. Only
+`oauth/redis` imports go-redis; any store can implement `oauth.TokenCache`
+directly.
 
 ## Request lifecycle tracing
 

@@ -16,16 +16,18 @@ Requires Go 1.26+. Module path: `github.com/JHeat89/go-library`.
 ## What this library is
 
 A reusable structured-logging library for enterprise Go services (REST,
-GraphQL, ETL, Kafka). Everything builds on the base `logger` package; the
-other packages are thin domain-specific layers over it.
+GraphQL, ETL, Kafka), plus an OAuth 2.0 token-acquisition package that logs
+through the same base logger. Everything builds on the base `logger` package;
+the other packages are thin domain-specific layers over it.
 
 ## Architecture
 
 **Core principle: stdlib-first, adapters optional.** The core packages
-(`logger`, `requestid`, `rest`, `graphql`, `etl`, `events`) have zero
+(`logger`, `requestid`, `rest`, `graphql`, `etl`, `events`, `oauth`) have zero
 third-party dependencies — the engine is `log/slog`. Only
-`graphql/gqlgen` imports gqlgen, so consumers who don't use gqlgen never pull
-it. New integrations must follow this split: agnostic core, dependency-bearing
+`graphql/gqlgen` imports gqlgen and only `oauth/redis` imports go-redis, so
+consumers who don't use gqlgen or Redis-backed token caching never pull them
+in. New integrations must follow this split: agnostic core, dependency-bearing
 adapter in a subpackage.
 
 **Request correlation flows through context.Context, not logger instances.**
@@ -66,3 +68,21 @@ depend on these names.
   Key matching is case-insensitive and recursive; patterns scrub matched
   substrings only (partial redaction). `graphql.WithRedactedVariables`
   delegates to the same engine — never add package-local redaction logic.
+  Exception: `oauth` never logs `AccessToken`/`ClientSecret`/`Password`/
+  `SecurityToken`/`Raw`/response bodies by construction — it does not rely on
+  the logger's redaction config for that guarantee, since a consumer could
+  forget to configure `RedactKeys`.
+
+## OAuth token acquisition (`oauth`, `oauth/redis`)
+
+`oauth.New(base *logger.Logger, oauth.Config) (*oauth.Client, error)` acquires
+OAuth 2.0 access tokens via `client_credentials` or Salesforce's
+username/password flow (`Config.GrantType`). `Client.Token(ctx)` is
+cache-aware (`Config.CacheRead`/`CacheWrite`, backed by `Config.Cache`);
+`Client.Refresh(ctx)` always fetches fresh; `Client.Invalidate(ctx)` deletes
+the cached entry. **There is no in-memory token cache** — every `Token` call
+consults `Config.Cache` or fetches, because an external process may refresh
+the cached token out-of-band; see the `oauth` package doc for the full
+rationale (also: no singleflight). Cache read/write failures are Warn-logged
+and fall through rather than failing the call. `oauth/redis` adapts go-redis
+v9 (`oauth.TokenCache`) and is the only file in the module importing it.
