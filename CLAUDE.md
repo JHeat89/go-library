@@ -16,18 +16,20 @@ Requires Go 1.26+. Module path: `github.com/JHeat89/go-library`.
 ## What this library is
 
 A reusable structured-logging library for enterprise Go services (REST,
-GraphQL, ETL, Kafka), plus an OAuth 2.0 token-acquisition package that logs
-through the same base logger. Everything builds on the base `logger` package;
-the other packages are thin domain-specific layers over it.
+GraphQL, ETL, Kafka), plus an OAuth 2.0 token-acquisition package and a
+secrets/parameter loader that log through the same base logger. Everything
+builds on the base `logger` package; the other packages are thin
+domain-specific layers over it.
 
 ## Architecture
 
 **Core principle: stdlib-first, adapters optional.** The core packages
-(`logger`, `requestid`, `rest`, `graphql`, `etl`, `events`, `oauth`) have zero
-third-party dependencies — the engine is `log/slog`. Only
-`graphql/gqlgen` imports gqlgen and only `oauth/redis` imports go-redis, so
-consumers who don't use gqlgen or Redis-backed token caching never pull them
-in. New integrations must follow this split: agnostic core, dependency-bearing
+(`logger`, `requestid`, `rest`, `graphql`, `etl`, `events`, `oauth`,
+`secrets`) have zero third-party dependencies — the engine is `log/slog`.
+Only `graphql/gqlgen` imports gqlgen, only `oauth/redis` imports go-redis, and
+only `secrets/aws` imports aws-sdk-go-v2, so consumers who don't use gqlgen,
+Redis-backed token caching, or AWS-backed secrets never pull them in. New
+integrations must follow this split: agnostic core, dependency-bearing
 adapter in a subpackage.
 
 **Request correlation flows through context.Context, not logger instances.**
@@ -86,3 +88,19 @@ the cached token out-of-band; see the `oauth` package doc for the full
 rationale (also: no singleflight). Cache read/write failures are Warn-logged
 and fall through rather than failing the call. `oauth/redis` adapts go-redis
 v9 (`oauth.TokenCache`) and is the only file in the module importing it.
+
+## Secrets and parameter loading (`secrets`, `secrets/aws`)
+
+`secrets.New(base *logger.Logger, src secrets.Source) *secrets.Loader` wraps
+a `Source` (`Secret`/`Parameter`/`ParametersByPath`) with structured logging,
+request-id correlation, and `Loader.SecretJSON` parsing for the common
+Secrets Manager key/value shape. `secrets/aws` adapts aws-sdk-go-v2's
+Secrets Manager and SSM Parameter Store clients to `secrets.Source` and is
+the only file in the module importing the AWS SDK; the consumer builds the
+`aws.Config` (e.g. via `config.LoadDefaultConfig`) and passes it to
+`aws.New`, matching the consumer-owns-the-client precedent from `oauth/redis`.
+Parameter reads always set `WithDecryption`; `ParametersByPath` is recursive
+with full `NextToken` pagination. **There is no cache** — secrets and
+parameters are meant to be loaded once at startup and held by the caller.
+Like `oauth`, secret and parameter *values* are never logged, only
+names/paths/source/duration.

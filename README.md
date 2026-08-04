@@ -15,8 +15,9 @@ structured logger built on the standard library's `log/slog` with:
   goroutines, cold start, uptime) attached to every completed request
 - **Platform aware** — auto-detects Lambda, ECS, Kubernetes, container, or
   local and enriches logs accordingly (region, function name, pod, ...)
-- **Zero dependencies** for the core; only `graphql/gqlgen` pulls in gqlgen
-  and only `oauth/redis` pulls in go-redis
+- **Zero dependencies** for the core; only `graphql/gqlgen` pulls in gqlgen,
+  only `oauth/redis` pulls in go-redis, and only `secrets/aws` pulls in
+  aws-sdk-go-v2
 
 ## Packages
 
@@ -31,6 +32,8 @@ structured logger built on the standard library's `log/slog` with:
 | `events` | Client-agnostic Kafka consume/produce logging with header-based request ID propagation |
 | `oauth` | OAuth 2.0 token acquisition (client_credentials, Salesforce password flow) with optional cache-aware fetching |
 | `oauth/redis` | go-redis v9 adapter for `oauth`'s token cache |
+| `secrets` | Structured-logging loader over a `Source` (secrets + SSM parameters), with JSON parsing for key/value secrets |
+| `secrets/aws` | aws-sdk-go-v2 adapter for `secrets.Source` (Secrets Manager + SSM Parameter Store) |
 
 ## Quickstart
 
@@ -166,6 +169,44 @@ refresh the cached token out-of-band. `AccessToken`, `ClientSecret`,
 `Password`, `SecurityToken`, and raw response bodies are never logged,
 independent of the base logger's `RedactKeys` configuration. Only
 `oauth/redis` imports go-redis; any store can implement `oauth.TokenCache`
+directly.
+
+### Secrets and parameters (AWS)
+
+```go
+import (
+    "github.com/JHeat89/go-library/secrets"
+    awssecrets "github.com/JHeat89/go-library/secrets/aws"
+    "github.com/aws/aws-sdk-go-v2/config"
+)
+
+cfg, err := config.LoadDefaultConfig(ctx) // consumer owns the aws.Config
+src := awssecrets.New(cfg)                // Secrets Manager + SSM Parameter Store
+loader := secrets.New(log, src)
+
+// A Secrets Manager secret stored as a JSON object of key/value pairs:
+dbCreds, err := loader.SecretJSON(ctx, "orders/db")
+dsn := fmt.Sprintf("postgres://%s:%s@...", dbCreds["username"], dbCreds["password"])
+
+// A single decrypted SSM parameter:
+apiKey, err := loader.Parameter(ctx, "/orders/payments-api-key")
+
+// Every parameter under a path, recursively:
+flags, err := loader.ParametersByPath(ctx, "/orders/feature-flags")
+
+// Wiring a loaded secret straight into another package's config:
+oauthCreds, err := loader.SecretJSON(ctx, "orders/oauth-client")
+client, err := oauth.New(log, oauth.Config{
+    TokenURL:     "https://auth.example.com/oauth2/token",
+    ClientID:     oauthCreds["clientId"],
+    ClientSecret: oauthCreds["clientSecret"],
+})
+```
+
+`secrets.Loader` does no caching — load once at startup and hold the values;
+add a TTL cache on top if you need one later. Only names, paths, source, and
+duration are ever logged — secret and parameter values never are. Only
+`secrets/aws` imports aws-sdk-go-v2; any store can implement `secrets.Source`
 directly.
 
 ## Request lifecycle tracing
